@@ -53,6 +53,10 @@
   .script span.cur{color:var(--gold);opacity:1;outline:1px solid var(--gold);outline-offset:1px}
   .script span.todo{color:var(--ink)}
   .note{font-size:12px;color:var(--muted);line-height:1.5}
+  .picker{display:flex;gap:10px}
+  .picker select{flex:1;min-width:0;font:500 16px Inter,system-ui;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;-webkit-appearance:none;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 20px) 50%,calc(100% - 15px) 50%;background-size:5px 5px;background-repeat:no-repeat}
+  .picker button{padding:12px 14px;font-size:14px}
+  .danger{color:#e08a8a;border-color:#4a2b2e}
   .msg{font-size:13px;color:var(--gold);text-align:center;min-height:18px}
 </style>
 </head>
@@ -62,6 +66,10 @@
     <h1 id="title">Prompter<small id="sub">Recite — I prompt one word when you stall</small></h1>
     <div class="status"><span class="dot" id="dot"></span><span id="statusText">Ready</span></div>
   </header>
+  <div class="picker">
+    <select id="pick" aria-label="Choose text"></select>
+    <button id="newBtn" title="Add a new text">+ New</button>
+  </div>
   <div class="progress"><i id="bar"></i></div>
 
   <div class="cue idle" id="cue">
@@ -85,19 +93,30 @@
 
   <div class="script blind" id="script"></div>
 
-  <p class="note">Tap the card when stuck for the next word. Tap any word in the text to start from there. Your text stays on this phone only.</p>
-  <button id="editBtn" style="align-self:flex-start;font-size:13px;padding:10px 14px">Change text</button>
+  <p class="note">Tap the card when stuck for the next word. Tap any word in the text to start from there. Your texts stay on this phone only.</p>
+  <button id="editBtn" style="align-self:flex-start;font-size:13px;padding:10px 14px">Edit this text</button>
   <div id="editor" style="display:none;flex-direction:column;gap:10px">
+    <input id="nameIn" placeholder="Name, e.g. Scribe N. closing" style="width:100%;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px;font:16px Inter,system-ui">
     <p class="note" style="margin:0">Paste the full text you want to recite. Blank lines separate paragraphs.</p>
     <textarea id="ta" rows="12" style="width:100%;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px;font:16px/1.45 Inter,system-ui"></textarea>
     <div class="controls"><button class="primary" id="saveBtn">Save text</button><button id="cancelBtn">Cancel</button></div>
+    <button id="delBtn" class="danger" style="align-self:flex-start;font-size:13px;padding:10px 14px">Delete this text</button>
   </div>
 </div>
 
 <script>
-const KEY="prompter.text.v1";
-let TEXT=[];
-try{ const t=localStorage.getItem(KEY); if(t) TEXT=t.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean);}catch(e){}
+const LIBKEY="prompter.lib.v1", CURKEY="prompter.current";
+const splitText = t => t.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean);
+let LIB=[], curId=null, TEXT=[];
+try{ LIB = JSON.parse(localStorage.getItem(LIBKEY)||"[]"); curId = localStorage.getItem(CURKEY); }catch(e){ LIB=[]; }
+try{ // bring across a text saved by the earlier version
+  const old=localStorage.getItem("prompter.text.v1");
+  if(old && !LIB.length){ LIB=[{id:"t"+Date.now(), name:"My text", text:old}]; curId=LIB[0].id; localStorage.setItem(LIBKEY, JSON.stringify(LIB)); localStorage.setItem(CURKEY,curId); }
+}catch(e){}
+if(!LIB.find(x=>x.id===curId)) curId = LIB[0] ? LIB[0].id : null;
+function saveLib(){ try{ localStorage.setItem(LIBKEY, JSON.stringify(LIB)); if(curId) localStorage.setItem(CURKEY,curId); else localStorage.removeItem(CURKEY); }catch(e){ msg.textContent="Couldn't save on this phone — private browsing?"; } }
+function current(){ return LIB.find(x=>x.id===curId) || null; }
+TEXT = current() ? splitText(current().text) : [];
 
 // ---------- words ----------
 const norm = w => w.toLowerCase().replace(/[’']/g,"").replace(/[^a-z0-9]/g,"")
@@ -247,16 +266,45 @@ $("speakToggle").checked = speakOn;
 $("speakToggle").onchange = e => { speakOn=e.target.checked; try{localStorage.setItem("prompter.speak", speakOn?"1":"0");}catch(err){} };
 $("showText").onchange = e => scriptEl.classList.toggle("blind", !e.target.checked);
 
-// ---------- editor ----------
-const editor=$("editor"), ta=$("ta");
-function openEditor(){ ta.value=TEXT.join("\n\n"); editor.style.display="flex"; $("editBtn").style.display="none"; ta.focus(); }
-function closeEditor(){ editor.style.display="none"; $("editBtn").style.display=""; }
-$("editBtn").onclick=openEditor; $("cancelBtn").onclick=closeEditor;
+// ---------- library & editor ----------
+const editor=$("editor"), ta=$("ta"), nameIn=$("nameIn"), pick=$("pick");
+let editingId=null;
+function fillPicker(){
+  pick.innerHTML="";
+  if(!LIB.length){ const o=document.createElement("option"); o.textContent="No texts yet — tap + New"; pick.appendChild(o); pick.disabled=true; return; }
+  pick.disabled=false;
+  LIB.forEach(t=>{ const o=document.createElement("option"); o.value=t.id; o.textContent=t.name; if(t.id===curId) o.selected=true; pick.appendChild(o); });
+}
+function stopListening(){ if(typeof want!=="undefined" && want){ want=false; speaking=false; try{speechSynthesis.cancel();}catch(e){} try{rec&&rec.stop();}catch(e){} setListening(false); keepAwake(false);} }
+function loadCurrent(){ TEXT = current()? splitText(current().text) : []; buildWords(); jumpTo(0); fillPicker(); }
+pick.onchange=()=>{ stopListening(); curId=pick.value; saveLib(); closeEditor(); loadCurrent(); };
+function openEditor(isNew){
+  stopListening();
+  editingId = isNew ? null : curId;
+  const t = isNew ? null : current();
+  nameIn.value = t ? t.name : ""; ta.value = t ? t.text : "";
+  $("delBtn").style.display = t ? "" : "none";
+  editor.style.display="flex"; $("editBtn").style.display="none";
+  (isNew? nameIn : ta).focus();
+}
+function closeEditor(){ editor.style.display="none"; $("editBtn").style.display = LIB.length? "" : "none"; }
+$("newBtn").onclick=()=>openEditor(true);
+$("editBtn").onclick=()=>openEditor(!LIB.length);
+$("cancelBtn").onclick=closeEditor;
 $("saveBtn").onclick=()=>{
-  const t=ta.value.trim(); if(!t) return;
-  try{ localStorage.setItem(KEY,t);}catch(e){ msg.textContent="Couldn't save on this phone — private browsing?"; }
-  TEXT=t.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean);
-  buildWords(); jumpTo(0); closeEditor();
+  const text=ta.value.trim(); if(!text){ ta.focus(); return; }
+  const name=nameIn.value.trim() || text.split(/\s+/).slice(0,4).join(" ")+"…";
+  if(editingId){ const t=LIB.find(x=>x.id===editingId); t.name=name; t.text=text; curId=editingId; }
+  else { const id="t"+Date.now(); LIB.push({id,name,text}); curId=id; }
+  saveLib(); closeEditor(); loadCurrent();
+};
+let delArmed=false;
+$("delBtn").onclick=()=>{
+  if(!delArmed){ delArmed=true; $("delBtn").textContent="Tap again to delete"; setTimeout(()=>{delArmed=false; $("delBtn").textContent="Delete this text";},3000); return; }
+  delArmed=false; $("delBtn").textContent="Delete this text";
+  LIB = LIB.filter(x=>x.id!==editingId); curId = LIB[0]? LIB[0].id : null;
+  saveLib(); closeEditor(); loadCurrent();
+  if(!LIB.length) openEditor(true);
 };
 
 // ---------- speech (Safari / Chrome Web Speech API) ----------
@@ -309,7 +357,7 @@ function startRec(){
   rec.start();
 }
 startBtn.onclick = () => {
-  if(!WORDS.length){ openEditor(); return; }
+  if(!WORDS.length){ openEditor(true); return; }
   if(!SR){ msg.textContent="This browser can't listen — open the page in Safari. Tap the card for prompts meanwhile."; return; }
   if(want){ want=false; speaking=false; try{ speechSynthesis.cancel(); }catch(e){} try{ rec && rec.stop(); }catch(e){} setListening(false); keepAwake(false); return; }
   try{ if(speakOn && window.speechSynthesis){ const u=new SpeechSynthesisUtterance(" "); u.volume=0; speechSynthesis.speak(u); } }catch(e){}
@@ -318,9 +366,9 @@ startBtn.onclick = () => {
 };
 document.addEventListener("visibilitychange",()=>{ if(document.hidden && want){ want=false; try{rec.stop();}catch(e){} setListening(false); msg.textContent="Paused while the screen was away — press Start."; }});
 
-buildWords();
+buildWords(); fillPicker(); closeEditor();
 if(!SR) $("statusText").textContent="Tap mode";
-if(!WORDS.length){ openEditor(); cueLabel.textContent="First, your text"; cueWord.textContent="Paste it below"; cueHint.textContent="Once saved, it stays on this phone."; }
+if(!WORDS.length){ openEditor(true); cueLabel.textContent="First, your text"; cueWord.textContent="Paste it below"; cueHint.textContent="Name it and paste it below. It stays on this phone."; }
 render();
 </script>
 </body>
