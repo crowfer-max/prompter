@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompter</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Prompter">
+<meta name="theme-color" content="#121014">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#121014; --panel:#1b181f; --line:#2c2832; --ink:#ece6da; --muted:#8d8698;
+    --gold:#c9a24a; --gold-soft:rgba(201,162,74,.14); --red:#b84a4a; --green:#6fa37a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:680px;margin:0 auto;padding:20px 18px 40px;display:flex;flex-direction:column;gap:16px;min-height:100vh}
+  header{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  h1{font-family:"Cormorant Garamond",serif;font-weight:600;font-size:24px;margin:0;letter-spacing:.3px}
+  h1 small{display:block;font-family:Inter;font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;margin-top:2px}
+  .status{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .dot.on{background:var(--green);box-shadow:0 0 0 4px rgba(111,163,122,.18)}
+  .progress{height:4px;background:var(--line);border-radius:4px;overflow:hidden}
+  .progress i{display:block;height:100%;width:0;background:var(--gold);transition:width .3s}
+
+  .cue{background:var(--panel);border:1px solid var(--line);border-radius:18px;min-height:210px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;cursor:pointer;user-select:none;transition:border-color .2s,background .2s}
+  .cue.stuck{border-color:var(--gold);background:linear-gradient(180deg,var(--gold-soft),var(--panel))}
+  .cue .label{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+  .cue .word{font-family:"Cormorant Garamond",serif;font-size:64px;line-height:1.05;font-weight:600;color:var(--gold);min-height:68px}
+  .cue .hint{font-size:13px;color:var(--muted);margin-top:12px}
+  .cue.idle .word{font-size:28px;color:var(--ink);font-weight:500}
+  .heard{font-size:13px;color:var(--muted);min-height:18px;text-align:center;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .controls{display:flex;gap:10px}
+  button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:12px;padding:14px 16px;cursor:pointer;font-weight:500}
+  button:active{transform:translateY(1px)}
+  .primary{flex:1;background:var(--gold);color:#1a1408;border-color:var(--gold);font-weight:600;font-size:16px}
+  .primary.listening{background:var(--red);border-color:var(--red);color:#fff}
+
+  .settings{display:flex;flex-wrap:wrap;gap:14px 20px;align-items:center;font-size:13px;color:var(--muted)}
+  .settings label{display:flex;align-items:center;gap:8px}
+  input[type=range]{accent-color:var(--gold);width:110px}
+  input[type=checkbox]{accent-color:var(--gold);width:16px;height:16px}
+
+  .script{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 20px;font-family:"Cormorant Garamond",serif;font-size:20px;line-height:1.55}
+  .script p{margin:0 0 10px}
+  .script span{cursor:pointer;border-radius:3px;transition:color .2s,opacity .2s}
+  .script.blind span.todo{color:transparent;background:rgba(255,255,255,.035)}
+  .script span.done{color:var(--ink);opacity:.55}
+  .script span.cur{color:var(--gold);opacity:1;outline:1px solid var(--gold);outline-offset:1px}
+  .script span.todo{color:var(--ink)}
+  .note{font-size:12px;color:var(--muted);line-height:1.5}
+  .msg{font-size:13px;color:var(--gold);text-align:center;min-height:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">Prompter<small id="sub">Recite — I prompt one word when you stall</small></h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">Ready</span></div>
+  </header>
+  <div class="progress"><i id="bar"></i></div>
+
+  <div class="cue idle" id="cue">
+    <div class="label" id="cueLabel">Begin when ready</div>
+    <div class="word" id="cueWord">Ready</div>
+    <div class="hint" id="cueHint">Press Start and recite. If you stall, the next word appears here.</div>
+  </div>
+  <div class="heard" id="heard"></div>
+  <div class="msg" id="msg"></div>
+
+  <div class="controls">
+    <button class="primary" id="startBtn">Start listening</button>
+    <button id="resetBtn">From the top</button>
+  </div>
+
+  <div class="settings">
+    <label>Prompt after <input type="range" id="delay" min="1.5" max="8" step="0.5" value="3"> <span id="delayVal">3.0s</span></label>
+    <label><input type="checkbox" id="showText"> Show the text</label>
+  </div>
+
+  <div class="script blind" id="script"></div>
+
+  <p class="note">Tap the card when stuck for the next word. Tap any word in the text to start from there. Your text stays on this phone only.</p>
+  <button id="editBtn" style="align-self:flex-start;font-size:13px;padding:10px 14px">Change text</button>
+  <div id="editor" style="display:none;flex-direction:column;gap:10px">
+    <p class="note" style="margin:0">Paste the full text you want to recite. Blank lines separate paragraphs.</p>
+    <textarea id="ta" rows="12" style="width:100%;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px;font:16px/1.45 Inter,system-ui"></textarea>
+    <div class="controls"><button class="primary" id="saveBtn">Save text</button><button id="cancelBtn">Cancel</button></div>
+  </div>
+</div>
+
+<script>
+const KEY="prompter.text.v1";
+let TEXT=[];
+try{ const t=localStorage.getItem(KEY); if(t) TEXT=t.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean);}catch(e){}
+
+// ---------- words ----------
+const norm = w => w.toLowerCase().replace(/[’']/g,"").replace(/[^a-z0-9]/g,"")
+  .replace(/our$/,"or").replace(/ise$/,"ize");
+const WORDS = [];
+const scriptEl = document.getElementById("script");
+function buildWords(){
+  WORDS.length=0; scriptEl.innerHTML="";
+  TEXT.forEach(par => {
+    const p = document.createElement("p");
+    par.split(/\s+/).forEach(raw => {
+      const s = document.createElement("span");
+      s.textContent = raw; s.className = "todo";
+      const idx = WORDS.length;
+      s.onclick = () => jumpTo(idx);
+      p.appendChild(s); p.appendChild(document.createTextNode(" "));
+      WORDS.push({raw, n: norm(raw), el: s});
+    });
+    scriptEl.appendChild(p);
+  });
+}
+// "forevermore" may be heard as one word
+const STOP = new Set("the and a of to in you your that is be by with for on as we it this his our all may".split(" "));
+
+function lev(a,b){
+  if(a===b) return 0; const m=a.length,n=b.length; if(!m||!n) return m||n;
+  let prev=Array.from({length:n+1},(_,j)=>j);
+  for(let i=1;i<=m;i++){const cur=[i];for(let j=1;j<=n;j++)cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));prev=cur;}
+  return prev[n];
+}
+function similar(h, t){
+  if(!h||!t) return false;
+  if(h===t) return true;
+  if(t.length<=3 || h.length<=3) return false;
+  if(t.startsWith(h) && h.length>=4) return true;      // partial word in flight
+  return lev(h,t) <= Math.max(1, Math.floor(t.length*0.3));
+}
+// advance a position through heard words
+function advance(pos, heardWords){
+  const miss = [];   // unmatched heard words, for re-syncing after a skipped phrase
+  for(const raw of heardWords){
+    const h = norm(raw); if(!h) continue;
+    if(pos>=WORDS.length) break;
+    // merged compounds ("forevermore")
+    if(pos+1<WORDS.length && h===WORDS[pos].n+WORDS[pos+1].n){pos+=2;miss.length=0;continue;}
+    const look = STOP.has(h) ? 2 : 6;
+    let hit=false;
+    for(let k=0;k<look && pos+k<WORDS.length;k++){
+      if(similar(h, WORDS[pos+k].n)){ pos = pos+k+1; hit=true; break; }
+    }
+    if(hit){ miss.length=0; continue; }
+    miss.push(h);
+    // re-sync: last 3 unmatched words appear in sequence further ahead
+    if(miss.length>=3){
+      const tail = miss.slice(-3);
+      for(let j=pos; j+3<=WORDS.length && j<pos+60; j++){
+        if(tail.every((w,q)=>similar(w, WORDS[j+q].n))){ pos=j+3; miss.length=0; break; }
+      }
+    }
+  }
+  return pos;
+}
+
+// ---------- state ----------
+let committed = 0;      // position after final phrases
+let pos = 0;            // live position incl. partial
+let lastProgress = Date.now();
+let listening = false;
+let stuckShown = false;
+let prompted = 0;       // words revealed by prompting at current spot
+let delay = 3000;
+
+const $ = id => document.getElementById(id);
+const cue=$("cue"), cueWord=$("cueWord"), cueLabel=$("cueLabel"), cueHint=$("cueHint");
+
+function render(){
+  WORDS.forEach((w,i)=>{ w.el.className = i<pos ? "done" : (i===pos && (listening||pos>0) ? "cur" : "todo"); });
+  $("bar").style.width = (pos/WORDS.length*100)+"%";
+  if(WORDS.length && pos>=WORDS.length){
+    cue.className="cue idle"; cueLabel.textContent="So mote it be"; cueWord.textContent="Word perfect.";
+    cueHint.textContent="That's the whole charge. ‘From the top’ to go again.";
+  }
+}
+function setPos(p){
+  if(p>pos){ lastProgress=Date.now(); clearStuck(); }
+  pos=p; render();
+}
+function clearStuck(){
+  stuckShown=false; prompted=0;
+  if(pos<WORDS.length){
+    cue.className = "cue" + (listening? "" : " idle");
+    cueLabel.textContent = listening ? "Listening" : (pos? "Paused" : "Begin when ready");
+    cueWord.textContent = listening ? "" : (pos? "…" : "Ready");
+    cueHint.textContent = listening ? "Carry on — I'll prompt if you stall." : "Press Start and recite. If you stall, the next word appears here.";
+  }
+}
+function showPrompt(){
+  if(pos>=WORDS.length) return;
+  const i = Math.min(pos+prompted, WORDS.length-1);
+  stuckShown=true;
+  cue.className="cue stuck";
+  cueLabel.textContent = prompted? "And then" : "Next word";
+  cueWord.textContent = WORDS[i].raw.replace(/[,;:.]+$/,"");
+  cueHint.textContent = "Tap for one more";
+}
+cue.onclick = () => {
+  if(pos>=WORDS.length) return;
+  if(!stuckShown){ showPrompt(); return; }
+  prompted++; if(pos+prompted>=WORDS.length) prompted=WORDS.length-pos-1;
+  showPrompt();
+};
+setInterval(()=>{
+  if(listening && !stuckShown && pos<WORDS.length && Date.now()-lastProgress>delay) showPrompt();
+},250);
+
+function jumpTo(i){
+  committed=pos=i; lastProgress=Date.now(); clearStuck(); render();
+}
+$("resetBtn").onclick = () => jumpTo(0);
+$("delay").oninput = e => { delay = e.target.value*1000; $("delayVal").textContent=(+e.target.value).toFixed(1)+"s"; };
+$("showText").onchange = e => scriptEl.classList.toggle("blind", !e.target.checked);
+
+// ---------- editor ----------
+const editor=$("editor"), ta=$("ta");
+function openEditor(){ ta.value=TEXT.join("\n\n"); editor.style.display="flex"; $("editBtn").style.display="none"; ta.focus(); }
+function closeEditor(){ editor.style.display="none"; $("editBtn").style.display=""; }
+$("editBtn").onclick=openEditor; $("cancelBtn").onclick=closeEditor;
+$("saveBtn").onclick=()=>{
+  const t=ta.value.trim(); if(!t) return;
+  try{ localStorage.setItem(KEY,t);}catch(e){ msg.textContent="Couldn't save on this phone — private browsing?"; }
+  TEXT=t.split(/\n\s*\n|\n/).map(x=>x.trim()).filter(Boolean);
+  buildWords(); jumpTo(0); closeEditor();
+};
+
+// ---------- speech (Safari / Chrome Web Speech API) ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const startBtn=$("startBtn"), msg=$("msg");
+let rec=null, want=false, sessionBase=0, wakeLock=null;
+
+function setListening(on){
+  listening=on;
+  startBtn.textContent = on ? "Stop" : "Start listening";
+  startBtn.classList.toggle("listening", on);
+  $("dot").classList.toggle("on", on);
+  $("statusText").textContent = on? "Listening" : (SR? "Ready" : "Tap mode");
+  if(on) lastProgress=Date.now();
+  clearStuck(); render();
+}
+async function keepAwake(on){
+  try{
+    if(on && "wakeLock" in navigator){ wakeLock = await navigator.wakeLock.request("screen"); }
+    else if(!on && wakeLock){ await wakeLock.release(); wakeLock=null; }
+  }catch(e){}
+}
+function startRec(){
+  rec = new SR();
+  rec.lang = "en-GB";
+  rec.interimResults = true;
+  rec.continuous = false;          // iOS is steadier with short sessions + auto-restart
+  rec.maxAlternatives = 1;
+  sessionBase = committed;
+  rec.onresult = e => {
+    let text="";
+    for(let i=0;i<e.results.length;i++) text += " " + e.results[i][0].transcript;
+    text=text.trim();
+    $("heard").textContent = text ? "…" + text.split(/\s+/).slice(-8).join(" ") : "";
+    const p = advance(sessionBase, text.split(/\s+/));
+    if(p>pos) setPos(p);
+  };
+  rec.onerror = e => {
+    if(e.error==="not-allowed" || e.error==="service-not-allowed"){
+      want=false; setListening(false);
+      msg.textContent = "Microphone or speech not allowed. Settings → Apps → Safari → Microphone, and make sure Siri is switched on.";
+    }
+  };
+  rec.onend = () => {
+    committed = Math.max(committed, pos);
+    if(want && pos<WORDS.length){ setTimeout(()=>{ if(want) try{ startRec(); }catch(e){} }, 120); }
+    else { want=false; setListening(false); keepAwake(false); }
+  };
+  rec.start();
+}
+startBtn.onclick = () => {
+  if(!WORDS.length){ openEditor(); return; }
+  if(!SR){ msg.textContent="This browser can't listen — open the page in Safari. Tap the card for prompts meanwhile."; return; }
+  if(want){ want=false; try{ rec && rec.stop(); }catch(e){} setListening(false); keepAwake(false); return; }
+  msg.textContent=""; want=true; committed=pos;
+  try{ startRec(); setListening(true); keepAwake(true); }catch(e){ want=false; msg.textContent="Couldn't start the microphone — try again."; }
+};
+document.addEventListener("visibilitychange",()=>{ if(document.hidden && want){ want=false; try{rec.stop();}catch(e){} setListening(false); msg.textContent="Paused while the screen was away — press Start."; }});
+
+buildWords();
+if(!SR) $("statusText").textContent="Tap mode";
+if(!WORDS.length){ openEditor(); cueLabel.textContent="First, your text"; cueWord.textContent="Paste it below"; cueHint.textContent="Once saved, it stays on this phone."; }
+render();
+</script>
+</body>
+</html>
